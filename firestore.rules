@@ -1,0 +1,119 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "acipandrey@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    
+    function isValidUser(data) {
+      return data.id is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.email is string &&
+             data.role in ['business', 'seeker', 'admin'];
+    }
+
+    function isValidBusiness(data) {
+      return data.id is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.email is string &&
+             data.verificationStatus in ['Pending', 'Verified', 'Rejected'];
+    }
+
+    function isValidSeeker(data) {
+      return data.id is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.email is string &&
+             data.verificationStatus in ['Pending', 'Verified', 'Rejected'];
+    }
+
+    function isValidJob(data) {
+      return data.id is string &&
+             data.businessId is string &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.status in ['Active', 'Closed'];
+    }
+
+    function isValidApplication(data) {
+      return data.id is string &&
+             data.jobId is string &&
+             data.businessId is string &&
+             data.seekerId is string &&
+             data.status in ['Pending', 'Under Review', 'Interview Scheduled', 'Accepted', 'Declined'];
+    }
+
+    function isValidNotification(data) {
+      return data.id is string &&
+             data.userId is string &&
+             data.title is string &&
+             data.type in ['info', 'success', 'warning'] &&
+             data.read is bool;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role != 'admin' || isAdmin());
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /businesses/{businessId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(businessId) && isValidBusiness(request.resource.data);
+      allow update: if (isOwner(businessId) && isValidBusiness(request.resource.data) && request.resource.data.verificationStatus == resource.data.verificationStatus) || isAdmin();
+    }
+
+    match /seekers/{seekerId} {
+      allow read: if isAuthenticated() && (isOwner(seekerId) || isAdmin() || resource.data.verificationStatus == 'Verified');
+      allow create: if isOwner(seekerId) && isValidSeeker(request.resource.data);
+      allow update: if (isOwner(seekerId) && isValidSeeker(request.resource.data) && request.resource.data.verificationStatus == resource.data.verificationStatus) || isAdmin();
+    }
+
+    match /jobs/{jobId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidJob(request.resource.data) && request.resource.data.businessId == request.auth.uid;
+      allow update: if (isAuthenticated() && isValidJob(request.resource.data) && resource.data.businessId == request.auth.uid) || isAdmin();
+      allow delete: if (isAuthenticated() && resource.data.businessId == request.auth.uid) || isAdmin();
+    }
+
+    match /applications/{applicationId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.seekerId || request.auth.uid == resource.data.businessId || isAdmin());
+      allow create: if isAuthenticated() && isValidApplication(request.resource.data) && request.resource.data.seekerId == request.auth.uid;
+      allow update: if (isAuthenticated() && isValidApplication(request.resource.data) && (request.auth.uid == resource.data.seekerId || request.auth.uid == resource.data.businessId)) || isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+      allow create: if isAdmin(); // Only admins can broadcast notifications for now, or add specific logic
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+    }
+
+    match /system_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated(); // Allow app to log events
+    }
+  }
+}
