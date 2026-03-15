@@ -79,4 +79,35 @@ export interface UserProfile {
   role: "business" | "seeker" | "admin";
 }
 
-export type Page = "login" | "profile" | "business-register" | "seeker-register" | "business-dashboard" | "post-job" | "seeker-dashboard" | "admin-dashboard" | "notifications" | "job-details";
+export interface Interview {
+  id: string;
+  applicationId: string;
+  jobId: string;
+  businessId: string;
+  seekerId: string;
+  scheduledAt: string;
+  location?: string;
+  notes?: string;
+  status: "Scheduled" | "Completed" | "Cancelled";
+}
+
+export interface Message {
+  id: string;
+  chatId: string;
+  senderId: string;
+  receiverId: string;
+  content: string;
+  timestamp: string;
+  read: boolean;
+}
+
+export interface Review {
+  id: string;
+  targetUserId: string;
+  authorId: string;
+  rating: number;
+  comment?: string;
+  createdAt: string;
+}
+
+export type Page = "login" | "profile" | "business-register" | "seeker-register" | "business-dashboard" | "post-job" | "seeker-dashboard" | "admin-dashboard" | "notifications" | "job-details" | "messages";

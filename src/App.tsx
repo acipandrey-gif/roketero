@@ -63,7 +63,10 @@ import {
   Application, 
   Notification,
   UserProfile, 
-  Page 
+  Page,
+  Interview,
+  Message,
+  Review
 } from "./types";
 
 // Firebase Imports
@@ -227,8 +230,12 @@ function AppContent() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [interviews, setInterviews] = useState<Interview[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [reviews, setReviews] = useState<Review[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isCreatingProfile, setIsCreatingProfile] = useState(false);
 
   const { toasts, addToast } = useToasts();
 
@@ -267,24 +274,24 @@ function AppContent() {
   // --- Firebase Auth Listener ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      console.log("Auth state changed:", firebaseUser?.email);
       if (firebaseUser) {
         try {
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           if (userDoc.exists()) {
             const userData = userDoc.data() as UserProfile;
+            console.log("User profile found:", userData.role);
             
             // Special check for the default admin
             if (firebaseUser.email === "acipandrey@gmail.com" && userData.role !== "admin") {
-              const updatedUser = { ...userData, role: "admin" as const };
               await updateDoc(doc(db, 'users', firebaseUser.uid), { role: "admin" });
-              setUser(updatedUser);
+              setUser({ ...userData, role: "admin" });
             } else {
               setUser(userData);
             }
-          } else {
+          } else if (!isCreatingProfile) {
+            console.log("User profile not found, auto-creating...");
             // User exists in Auth but not in Firestore (e.g., just signed up via social)
-            // We don't auto-create here to avoid race conditions with handleSignup
-            // Instead, we check if we're already on a registration page
             if (currentPage === "login") {
               const role = firebaseUser.email === "acipandrey@gmail.com" ? "admin" : "seeker";
               const newUser: UserProfile = {
@@ -301,6 +308,7 @@ function AppContent() {
             }
           }
         } catch (error) {
+          console.error("Error in auth listener:", error);
           handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
         }
       } else {
@@ -311,7 +319,7 @@ function AppContent() {
     });
 
     return () => unsubscribe();
-  }, []); // Run only on mount
+  }, [isCreatingProfile, currentPage]); // Added isCreatingProfile to dependencies
 
   // --- Navigation Logic ---
   useEffect(() => {
@@ -349,6 +357,22 @@ function AppContent() {
       },
       (error) => handleFirestoreError(error, OperationType.LIST, 'notifications')
     );
+    
+    const unsubInterviews = onSnapshot(collection(db, 'interviews'), (snapshot) => {
+      setInterviews(snapshot.docs.map(doc => doc.data() as Interview));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'interviews'));
+
+    const unsubMessages = onSnapshot(
+      query(collection(db, 'messages'), where('chatId', '!=', '')), // Simple query for all messages for now
+      (snapshot) => {
+        setMessages(snapshot.docs.map(doc => doc.data() as Message));
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'messages')
+    );
+
+    const unsubReviews = onSnapshot(collection(db, 'reviews'), (snapshot) => {
+      setReviews(snapshot.docs.map(doc => doc.data() as Review));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'reviews'));
 
     return () => {
       unsubBusinesses();
@@ -356,6 +380,9 @@ function AppContent() {
       unsubJobs();
       unsubApplications();
       unsubNotifications();
+      unsubInterviews();
+      unsubMessages();
+      unsubReviews();
     };
   }, [isAuthReady, user]);
 
@@ -413,13 +440,20 @@ function AppContent() {
     if (!password) return;
     try {
       await signInWithEmailAndPassword(auth, email, password);
+      addToast("Welcome back!", "success");
     } catch (error: any) {
-      throw error;
+      console.error("Login error:", error.code, error.message);
+      let message = "Failed to log in. Please check your credentials.";
+      if (error.code === 'auth/user-not-found') message = "No account found with this email.";
+      if (error.code === 'auth/wrong-password') message = "Incorrect password.";
+      if (error.code === 'auth/invalid-email') message = "Invalid email address format.";
+      throw new Error(message);
     }
   };
 
   const handleSignup = async (role: "business" | "seeker", email: string, password?: string) => {
     if (!password) return;
+    setIsCreatingProfile(true);
     try {
       const { user: firebaseUser } = await createUserWithEmailAndPassword(auth, email, password);
       const name = email.split('@')[0];
@@ -427,6 +461,7 @@ function AppContent() {
       
       await setDoc(doc(db, 'users', firebaseUser.uid), newUser);
       setUser(newUser);
+      addToast("Account created successfully!", "success");
       
       if (role === "business") {
         setCurrentPage("business-register");
@@ -434,7 +469,13 @@ function AppContent() {
         setCurrentPage("seeker-register");
       }
     } catch (error: any) {
-      throw error;
+      console.error("Signup error:", error.code, error.message);
+      let message = "Failed to create account.";
+      if (error.code === 'auth/email-already-in-use') message = "This email is already in use.";
+      if (error.code === 'auth/weak-password') message = "Password is too weak.";
+      throw new Error(message);
+    } finally {
+      setIsCreatingProfile(false);
     }
   };
 
@@ -607,6 +648,58 @@ function AppContent() {
     }
   };
 
+  const scheduleInterview = async (data: Omit<Interview, "id" | "status">) => {
+    const id = Math.random().toString(36).substr(2, 9);
+    const newInterview: Interview = { ...data, id, status: "Scheduled" };
+    try {
+      await setDoc(doc(db, 'interviews', id), newInterview);
+      await updateApplicationStatus(data.applicationId, ApplicationStatus.INTERVIEW_SCHEDULED);
+      addNotification(data.seekerId, "Interview Scheduled", `An interview has been scheduled for ${jobs.find(j => j.id === data.jobId)?.title}.`, "success");
+      addToast("Interview scheduled!", "success");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `interviews/${id}`);
+    }
+  };
+
+  const sendMessage = async (chatId: string, receiverId: string, content: string) => {
+    if (!user) return;
+    const id = Math.random().toString(36).substr(2, 9);
+    const newMessage: Message = {
+      id,
+      chatId,
+      senderId: user.id,
+      receiverId,
+      content,
+      timestamp: new Date().toISOString(),
+      read: false
+    };
+    try {
+      await setDoc(doc(db, 'messages', id), newMessage);
+      addNotification(receiverId, "New Message", `You have a new message from ${user.name}.`, "info");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `messages/${id}`);
+    }
+  };
+
+  const addReview = async (targetUserId: string, rating: number, comment: string) => {
+    if (!user) return;
+    const id = Math.random().toString(36).substr(2, 9);
+    const newReview: Review = {
+      id,
+      targetUserId,
+      authorId: user.id,
+      rating,
+      comment,
+      createdAt: new Date().toISOString()
+    };
+    try {
+      await setDoc(doc(db, 'reviews', id), newReview);
+      addToast("Review submitted!", "success");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `reviews/${id}`);
+    }
+  };
+
   // --- Derived State ---
   const currentBusiness = user ? businesses.find(b => b.id === user.id) : null;
   const businessJobs = jobs.filter(j => j.businessId === user?.id);
@@ -642,6 +735,13 @@ function AppContent() {
                 >
                   <LayoutDashboard className="w-4 h-4" />
                   Dashboard
+                </button>
+                <button 
+                  onClick={() => navigate("messages")}
+                  className="text-slate-600 hover:text-[#5a5a40] font-medium transition-colors flex items-center gap-2"
+                >
+                  <Mail className="w-4 h-4" />
+                  Messages
                 </button>
                 <div className="flex items-center gap-3 pl-6 border-l border-slate-200">
                   <div className="text-right hidden sm:block">
@@ -694,6 +794,16 @@ function AppContent() {
               onNavigate={navigate}
               onUpdateStatus={updateApplicationStatus}
               seekers={seekers}
+              onMessage={(receiverId) => {
+                // Create a chatId if it doesn't exist or find existing
+                const existingMessage = messages.find(m => 
+                  (m.senderId === user?.id && m.receiverId === receiverId) ||
+                  (m.senderId === receiverId && m.receiverId === user?.id)
+                );
+                const chatId = existingMessage ? existingMessage.chatId : `${user?.id}_${receiverId}`;
+                navigate("messages");
+                // We could also set the active chat here if we had a way to pass it to MessagesPage
+              }}
             />
           )}
 
@@ -728,6 +838,14 @@ function AppContent() {
                 if (job) applyForJob(job);
               }}
               onBack={() => navigate("seeker-dashboard")}
+              onMessage={(receiverId) => {
+                const existingMessage = messages.find(m => 
+                  (m.senderId === user?.id && m.receiverId === receiverId) ||
+                  (m.senderId === receiverId && m.receiverId === user?.id)
+                );
+                const chatId = existingMessage ? existingMessage.chatId : `${user?.id}_${receiverId}`;
+                navigate("messages");
+              }}
             />
           )}
 
@@ -744,6 +862,17 @@ function AppContent() {
                 onVerify={verifyEntity}
               />
             </ProtectedRoute>
+          )}
+
+          {currentPage === "messages" && (
+            <MessagesPage 
+              key="messages"
+              user={user}
+              messages={messages}
+              onSendMessage={sendMessage}
+              businesses={businesses}
+              seekers={seekers}
+            />
           )}
         </AnimatePresence>
       </main>
@@ -999,6 +1128,115 @@ function ProfilePage({ user }: { user: UserProfile | null, key?: any }) {
         </div>
       </motion.div>
     );
+}
+
+function MessagesPage({ user, messages, onSendMessage, businesses, seekers }: { 
+  user: UserProfile | null, 
+  messages: Message[], 
+  onSendMessage: (chatId: string, receiverId: string, content: string) => Promise<void>,
+  businesses: Business[],
+  seekers: Seeker[],
+  key?: any
+}) {
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [newMessage, setNewMessage] = useState("");
+
+  if (!user) return null;
+
+  const userMessages = messages.filter(m => m.senderId === user.id || m.receiverId === user.id);
+  const chats = Array.from(new Set(userMessages.map(m => m.chatId)));
+  
+  const activeChatMessages = userMessages.filter(m => m.chatId === activeChatId).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  
+  const getOtherParty = (chatId: string) => {
+    const firstMsg = userMessages.find(m => m.chatId === chatId);
+    if (!firstMsg) return null;
+    const otherId = firstMsg.senderId === user.id ? firstMsg.receiverId : firstMsg.senderId;
+    return businesses.find(b => b.id === otherId) || seekers.find(s => s.id === otherId) || { name: "Unknown User", id: otherId };
+  };
+
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !activeChatId) return;
+    
+    const otherParty = getOtherParty(activeChatId);
+    if (otherParty) {
+      await onSendMessage(activeChatId, otherParty.id, newMessage);
+      setNewMessage("");
+    }
+  };
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-8 h-[calc(100vh-200px)]">
+      <div className="md:col-span-1 bg-white rounded-[32px] border border-[#e5e2d5] overflow-hidden flex flex-col">
+        <div className="p-6 border-b border-[#e5e2d5] bg-[#fdfcf8]">
+          <h2 className="text-xl font-bold text-[#3a3a30] serif">Conversations</h2>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {chats.length === 0 ? (
+            <div className="text-center py-10 text-slate-400 italic text-sm">No conversations yet</div>
+          ) : (
+            chats.map(chatId => {
+              const otherParty = getOtherParty(chatId);
+              return (
+                <button
+                  key={chatId}
+                  onClick={() => setActiveChatId(chatId)}
+                  className={`w-full p-4 rounded-2xl text-left transition-all ${activeChatId === chatId ? 'bg-[#5a5a40] text-white shadow-lg' : 'hover:bg-slate-50 text-slate-600'}`}
+                >
+                  <p className="font-bold truncate">{otherParty?.name}</p>
+                  <p className={`text-xs truncate ${activeChatId === chatId ? 'text-white/70' : 'text-slate-400'}`}>
+                    {userMessages.filter(m => m.chatId === chatId).pop()?.content}
+                  </p>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      <div className="md:col-span-2 bg-white rounded-[32px] border border-[#e5e2d5] overflow-hidden flex flex-col">
+        {activeChatId ? (
+          <>
+            <div className="p-6 border-b border-[#e5e2d5] bg-[#fdfcf8] flex items-center justify-between">
+              <h2 className="text-xl font-bold text-[#3a3a30] serif">{getOtherParty(activeChatId)?.name}</h2>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/50">
+              {activeChatMessages.map(msg => (
+                <div key={msg.id} className={`flex ${msg.senderId === user.id ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[80%] p-4 rounded-2xl text-sm ${msg.senderId === user.id ? 'bg-[#5a5a40] text-white rounded-tr-none' : 'bg-white border border-[#e5e2d5] text-slate-700 rounded-tl-none'}`}>
+                    <p>{msg.content}</p>
+                    <p className={`text-[10px] mt-1 ${msg.senderId === user.id ? 'text-white/50' : 'text-slate-400'}`}>
+                      {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <form onSubmit={handleSend} className="p-6 border-t border-[#e5e2d5] bg-white">
+              <div className="flex gap-4">
+                <input
+                  type="text"
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  placeholder="Type your message..."
+                  className="flex-1 px-6 py-3 rounded-2xl border border-[#e5e2d5] focus:ring-2 focus:ring-[#5a5a40]/20 focus:border-[#5a5a40] outline-none transition-all"
+                />
+                <button type="submit" className="bg-[#5a5a40] text-white px-8 py-3 rounded-2xl font-bold hover:bg-[#3a3a30] transition-all shadow-lg">
+                  Send
+                </button>
+              </div>
+            </form>
+          </>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-10 text-center">
+            <Mail className="w-16 h-16 mb-4 opacity-20" />
+            <p className="serif text-xl">Select a conversation to start chatting</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function BusinessRegisterPage({ onRegister }: { onRegister: (data: Omit<Business, "id" | "verificationStatus">) => void, key?: any }) {
@@ -1286,7 +1524,8 @@ function BusinessDashboard({
   applications, 
   onNavigate,
   onUpdateStatus,
-  seekers
+  seekers,
+  onMessage
 }: { 
   business: Business | null | undefined, 
   jobs: Job[], 
@@ -1294,6 +1533,7 @@ function BusinessDashboard({
   onNavigate: (page: Page) => void,
   onUpdateStatus: (id: string, status: ApplicationStatus) => void,
   seekers: Seeker[],
+  onMessage: (receiverId: string) => void,
   key?: any
 }) {
   if (!business) {
@@ -1446,17 +1686,26 @@ function BusinessDashboard({
                           <p className="text-sm text-slate-500">Interested in <span className="text-[#5a5a40] font-medium">{job?.title}</span></p>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                          app.status === ApplicationStatus.ACCEPTED ? 'bg-emerald-100 text-emerald-700' :
-                          app.status === ApplicationStatus.DECLINED ? 'bg-rose-100 text-rose-700' :
-                          app.status === ApplicationStatus.INTERVIEW_SCHEDULED ? 'bg-blue-100 text-blue-700' :
-                          app.status === ApplicationStatus.UNDER_REVIEW ? 'bg-amber-100 text-amber-700' :
-                          'bg-slate-100 text-slate-600'
-                        }`}>
-                          {app.status?.replace('_', ' ') || app.status}
-                        </span>
-                        <p className="text-[10px] text-slate-400 mt-1">{app.appliedAt ? new Date(app.appliedAt).toLocaleDateString() : "Unknown date"}</p>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => onMessage(app.seekerId)}
+                          className="p-2 text-[#5a5a40] hover:bg-[#f5f5f0] rounded-full transition-colors"
+                          title="Send Message"
+                        >
+                          <Mail className="w-4 h-4" />
+                        </button>
+                        <div className="text-right">
+                          <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            app.status === ApplicationStatus.ACCEPTED ? 'bg-emerald-100 text-emerald-700' :
+                            app.status === ApplicationStatus.DECLINED ? 'bg-rose-100 text-rose-700' :
+                            app.status === ApplicationStatus.INTERVIEW_SCHEDULED ? 'bg-blue-100 text-blue-700' :
+                            app.status === ApplicationStatus.UNDER_REVIEW ? 'bg-amber-100 text-amber-700' :
+                            'bg-slate-100 text-slate-600'
+                          }`}>
+                            {app.status?.replace('_', ' ') || app.status}
+                          </span>
+                          <p className="text-[10px] text-slate-400 mt-1">{app.appliedAt ? new Date(app.appliedAt).toLocaleDateString() : "Unknown date"}</p>
+                        </div>
                       </div>
                     </div>
 
@@ -1701,13 +1950,15 @@ function JobDetailsPage({
   business, 
   hasApplied, 
   onApply, 
-  onBack 
+  onBack,
+  onMessage
 }: { 
   job: Job | undefined, 
   business: Business | undefined, 
   hasApplied: boolean, 
   onApply: () => void, 
   onBack: () => void,
+  onMessage: (receiverId: string) => void,
   key?: any
 }) {
   if (!job || !business) {
@@ -1815,18 +2066,27 @@ function JobDetailsPage({
                 </div>
               </div>
 
-              <button 
-                disabled={hasApplied}
-                onClick={onApply}
-                className={`w-full py-4 rounded-full font-bold transition-all flex items-center justify-center gap-2 ${
-                  hasApplied 
-                  ? "bg-slate-100 text-slate-400 cursor-not-allowed" 
-                  : "btn-primary shadow-lg shadow-[#5a5a40]/10"
-                }`}
-              >
-                {hasApplied ? <CheckCircle2 className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-                {hasApplied ? "Already Applied" : "Apply for this Job"}
-              </button>
+              <div className="space-y-3">
+                <button 
+                  disabled={hasApplied}
+                  onClick={onApply}
+                  className={`w-full py-4 rounded-full font-bold transition-all flex items-center justify-center gap-2 ${
+                    hasApplied 
+                    ? "bg-slate-100 text-slate-400 cursor-not-allowed" 
+                    : "btn-primary shadow-lg shadow-[#5a5a40]/10"
+                  }`}
+                >
+                  {hasApplied ? <CheckCircle2 className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
+                  {hasApplied ? "Already Applied" : "Apply for this Job"}
+                </button>
+                <button 
+                  onClick={() => onMessage(business.id)}
+                  className="w-full py-4 rounded-full font-bold border border-[#5a5a40] text-[#5a5a40] hover:bg-[#f5f5f0] transition-all flex items-center justify-center gap-2"
+                >
+                  <Mail className="w-5 h-5" />
+                  Message Employer
+                </button>
+              </div>
             </div>
 
             <div className="p-6 rounded-[32px] border border-[#e5e2d5] bg-white">

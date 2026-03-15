@@ -70,6 +70,32 @@ service cloud.firestore {
              data.read is bool;
     }
 
+    function isValidInterview(data) {
+      return data.id is string &&
+             data.applicationId is string &&
+             data.jobId is string &&
+             data.businessId is string &&
+             data.seekerId is string &&
+             data.scheduledAt is string &&
+             data.status in ['Scheduled', 'Completed', 'Cancelled'];
+    }
+
+    function isValidMessage(data) {
+      return data.id is string &&
+             data.chatId is string &&
+             data.senderId is string &&
+             data.receiverId is string &&
+             data.content is string && data.content.size() > 0 && data.content.size() < 5000 &&
+             data.read is bool;
+    }
+
+    function isValidReview(data) {
+      return data.id is string &&
+             data.targetUserId is string &&
+             data.authorId is string &&
+             data.rating is number && data.rating >= 1 && data.rating <= 5;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -109,6 +135,25 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
       allow create: if isAdmin(); // Only admins can broadcast notifications for now, or add specific logic
       allow update: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
+    }
+
+    match /interviews/{interviewId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.seekerId || request.auth.uid == resource.data.businessId || isAdmin());
+      allow create: if isAuthenticated() && isValidInterview(request.resource.data) && request.auth.uid == request.resource.data.businessId;
+      allow update: if (isAuthenticated() && isValidInterview(request.resource.data) && (request.auth.uid == resource.data.seekerId || request.auth.uid == resource.data.businessId)) || isAdmin();
+    }
+
+    match /messages/{messageId} {
+      allow read: if isAuthenticated() && (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.receiverId || isAdmin());
+      allow create: if isAuthenticated() && isValidMessage(request.resource.data) && request.auth.uid == request.resource.data.senderId;
+      allow update: if isAuthenticated() && (request.auth.uid == resource.data.receiverId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidReview(request.resource.data) && request.auth.uid == request.resource.data.authorId;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /system_logs/{logId} {

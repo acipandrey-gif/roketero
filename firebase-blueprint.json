@@ -97,6 +97,52 @@
       },
       "required": ["id", "name", "email", "role"]
     },
+    "Interview": {
+      "title": "Interview",
+      "description": "Scheduled interview details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "applicationId": { "type": "string" },
+        "jobId": { "type": "string" },
+        "businessId": { "type": "string" },
+        "seekerId": { "type": "string" },
+        "scheduledAt": { "type": "string" },
+        "location": { "type": "string" },
+        "notes": { "type": "string" },
+        "status": { "type": "string", "enum": ["Scheduled", "Completed", "Cancelled"] }
+      },
+      "required": ["id", "applicationId", "jobId", "businessId", "seekerId", "scheduledAt", "status"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Chat message between users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "chatId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "content": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "read": { "type": "boolean" }
+      },
+      "required": ["id", "chatId", "senderId", "receiverId", "content", "timestamp", "read"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Feedback and rating for a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "targetUserId": { "type": "string" },
+        "authorId": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "targetUserId", "authorId", "rating", "createdAt"]
+    },
     "SystemLog": {
       "title": "SystemLog",
       "description": "Security and audit logs",
@@ -136,6 +182,18 @@
     "users/{userId}": {
       "schema": "UserProfile",
       "description": "Collection of user profiles"
+    },
+    "interviews/{interviewId}": {
+      "schema": "Interview",
+      "description": "Collection of scheduled interviews"
+    },
+    "messages/{messageId}": {
+      "schema": "Message",
+      "description": "Collection of chat messages"
+    },
+    "reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Collection of user reviews"
     },
     "system_logs/{logId}": {
       "schema": "SystemLog",
