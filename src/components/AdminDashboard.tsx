@@ -10,7 +10,9 @@ import {
   Activity,
   Lock,
   Eye,
-  EyeOff
+  EyeOff,
+  Clock,
+  AlertCircle
 } from 'lucide-react';
 import { Business, Seeker, VerificationStatus } from '../types';
 import { collection, onSnapshot, query, limit, orderBy } from 'firebase/firestore';
@@ -30,6 +32,35 @@ interface AuditLog {
   timestamp: string;
   severity: 'low' | 'medium' | 'high';
 }
+
+const StatusBadge = ({ status }: { status: VerificationStatus }) => {
+  const configs = {
+    [VerificationStatus.VERIFIED]: {
+      color: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+      icon: <CheckCircle2 className="w-3 h-3" />,
+      label: 'Verified'
+    },
+    [VerificationStatus.REJECTED]: {
+      color: 'bg-rose-100 text-rose-700 border-rose-200',
+      icon: <XCircle className="w-3 h-3" />,
+      label: 'Rejected'
+    },
+    [VerificationStatus.PENDING]: {
+      color: 'bg-amber-100 text-amber-700 border-amber-200',
+      icon: <Clock className="w-3 h-3" />,
+      label: 'Pending'
+    }
+  };
+
+  const config = configs[status] || configs[VerificationStatus.PENDING];
+
+  return (
+    <span className={`flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border shadow-sm uppercase tracking-wider ${config.color}`}>
+      {config.icon}
+      {config.label}
+    </span>
+  );
+};
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ 
   businesses, 
@@ -99,14 +130,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <p className="text-sm text-slate-500">{b.address}</p>
                       <p className="text-xs text-slate-400 mt-1">{b.phone}</p>
                     </div>
-                    <div className="flex flex-col gap-2 items-end">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full text-center uppercase ${
-                        b.verificationStatus === VerificationStatus.VERIFIED ? 'bg-emerald-100 text-emerald-700' :
-                        b.verificationStatus === VerificationStatus.REJECTED ? 'bg-rose-100 text-rose-700' :
-                        'bg-amber-100 text-amber-700'
-                      }`}>
-                        {b.verificationStatus}
-                      </span>
+                    <div className="flex flex-col gap-3 items-end">
+                      <StatusBadge status={b.verificationStatus} />
                       <div className="flex gap-2">
                         <button 
                           onClick={() => onVerify(b.id, "business", VerificationStatus.VERIFIED)}
@@ -149,14 +174,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <p className="text-sm text-slate-500">{s.address}</p>
                       <p className="text-xs text-slate-400 mt-1">{(s.attachments?.length || 0)} Attachments</p>
                     </div>
-                    <div className="flex flex-col gap-2 items-end">
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full text-center uppercase ${
-                        s.verificationStatus === VerificationStatus.VERIFIED ? 'bg-emerald-100 text-emerald-700' :
-                        s.verificationStatus === VerificationStatus.REJECTED ? 'bg-rose-100 text-rose-700' :
-                        'bg-amber-100 text-amber-700'
-                      }`}>
-                        {s.verificationStatus}
-                      </span>
+                    <div className="flex flex-col gap-3 items-end">
+                      <StatusBadge status={s.verificationStatus} />
                       <div className="flex gap-2">
                         <button 
                           onClick={() => onVerify(s.id, "seeker", VerificationStatus.VERIFIED)}
@@ -264,11 +283,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         {log.details}
                       </td>
                       <td className="px-6 py-4">
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
-                          log.severity === 'high' ? 'bg-rose-100 text-rose-700' :
-                          log.severity === 'medium' ? 'bg-amber-100 text-amber-700' :
-                          'bg-emerald-100 text-emerald-700'
+                        <span className={`flex items-center gap-1.5 w-fit text-[10px] font-bold px-2.5 py-1 rounded-full border uppercase tracking-wider ${
+                          log.severity === 'high' ? 'bg-rose-100 text-rose-700 border-rose-200' :
+                          log.severity === 'medium' ? 'bg-amber-100 text-amber-700 border-amber-200' :
+                          'bg-emerald-100 text-emerald-700 border-emerald-200'
                         }`}>
+                          {log.severity === 'high' ? <ShieldAlert className="w-3 h-3" /> : 
+                           log.severity === 'medium' ? <AlertCircle className="w-3 h-3" /> : 
+                           <ShieldCheck className="w-3 h-3" />}
                           {log.severity}
                         </span>
                       </td>

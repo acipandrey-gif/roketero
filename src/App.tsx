@@ -48,9 +48,6 @@ import {
   ArrowLeft,
   Calendar,
   Facebook,
-  Apple,
-  Smartphone,
-  Twitter,
   ShieldCheck as ShieldCheckIcon
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
@@ -436,49 +433,6 @@ function AppContent() {
     }
   };
 
-  const handleLogin = async (email: string, password?: string) => {
-    if (!password) return;
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      addToast("Welcome back!", "success");
-    } catch (error: any) {
-      console.error("Login error:", error.code, error.message);
-      let message = "Failed to log in. Please check your credentials.";
-      if (error.code === 'auth/user-not-found') message = "No account found with this email.";
-      if (error.code === 'auth/wrong-password') message = "Incorrect password.";
-      if (error.code === 'auth/invalid-email') message = "Invalid email address format.";
-      throw new Error(message);
-    }
-  };
-
-  const handleSignup = async (role: "business" | "seeker", email: string, password?: string) => {
-    if (!password) return;
-    setIsCreatingProfile(true);
-    try {
-      const { user: firebaseUser } = await createUserWithEmailAndPassword(auth, email, password);
-      const name = email.split('@')[0];
-      const newUser: UserProfile = { id: firebaseUser.uid, name, email, role };
-      
-      await setDoc(doc(db, 'users', firebaseUser.uid), newUser);
-      setUser(newUser);
-      addToast("Account created successfully!", "success");
-      
-      if (role === "business") {
-        setCurrentPage("business-register");
-      } else {
-        setCurrentPage("seeker-register");
-      }
-    } catch (error: any) {
-      console.error("Signup error:", error.code, error.message);
-      let message = "Failed to create account.";
-      if (error.code === 'auth/email-already-in-use') message = "This email is already in use.";
-      if (error.code === 'auth/weak-password') message = "Password is too weak.";
-      throw new Error(message);
-    } finally {
-      setIsCreatingProfile(false);
-    }
-  };
-
   const handleGoogleLogin = async () => {
     try {
       const result = await signInWithPopup(auth, googleProvider);
@@ -486,16 +440,18 @@ function AppContent() {
       
       const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
       if (!userDoc.exists()) {
-        // New user from Google, default to seeker for now
+        const role = firebaseUser.email === "acipandrey@gmail.com" ? "admin" : "seeker";
         const newUser: UserProfile = {
           id: firebaseUser.uid,
           name: firebaseUser.displayName || "New Neighbor",
           email: firebaseUser.email || "",
-          role: "seeker"
+          role: role as any
         };
         await setDoc(doc(db, 'users', firebaseUser.uid), newUser);
         setUser(newUser);
-        setCurrentPage("seeker-register");
+        
+        if (role === "admin") setCurrentPage("admin-dashboard");
+        else setCurrentPage("seeker-register");
       }
     } catch (error: any) {
       addToast(error.message, 'error');
@@ -509,15 +465,18 @@ function AppContent() {
       
       const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
       if (!userDoc.exists()) {
+        const role = firebaseUser.email === "acipandrey@gmail.com" ? "admin" : "seeker";
         const newUser: UserProfile = {
           id: firebaseUser.uid,
           name: firebaseUser.displayName || "New Neighbor",
           email: firebaseUser.email || "",
-          role: "seeker"
+          role: role as any
         };
         await setDoc(doc(db, 'users', firebaseUser.uid), newUser);
         setUser(newUser);
-        setCurrentPage("seeker-register");
+        
+        if (role === "admin") setCurrentPage("admin-dashboard");
+        else setCurrentPage("seeker-register");
       }
     } catch (error: any) {
       addToast(error.message, 'error');
@@ -537,7 +496,12 @@ function AppContent() {
 
   const registerBusiness = async (data: Omit<Business, "id" | "verificationStatus">) => {
     if (!user) return;
-    const newBusiness: Business = { ...data, id: user.id, verificationStatus: VerificationStatus.PENDING };
+    const newBusiness: Business = { 
+      ...data, 
+      email: user.email,
+      id: user.id, 
+      verificationStatus: VerificationStatus.PENDING 
+    };
     try {
       await setDoc(doc(db, 'businesses', user.id), newBusiness);
       addNotification("admin-id", "New Employer Registration", `Employer ${data.name} is awaiting verification.`, "warning");
@@ -549,7 +513,12 @@ function AppContent() {
 
   const registerSeeker = async (data: Omit<Seeker, "id" | "verificationStatus">) => {
     if (!user) return;
-    const newSeeker: Seeker = { ...data, id: user.id, verificationStatus: VerificationStatus.PENDING };
+    const newSeeker: Seeker = { 
+      ...data, 
+      email: user.email,
+      id: user.id, 
+      verificationStatus: VerificationStatus.PENDING 
+    };
     try {
       await setDoc(doc(db, 'seekers', user.id), newSeeker);
       setCurrentPage("seeker-dashboard");
@@ -766,8 +735,6 @@ function AppContent() {
           {currentPage === "login" && (
             <LoginPage 
               key="login" 
-              onLogin={handleLogin} 
-              onSignup={handleSignup} 
               onGoogleLogin={handleGoogleLogin}
               onFacebookLogin={handleFacebookLogin}
             />
@@ -882,34 +849,18 @@ function AppContent() {
 
 // --- Page Components ---
 
-function LoginPage({ onLogin, onSignup, onGoogleLogin, onFacebookLogin }: { 
-  onLogin: (email: string, password?: string) => Promise<void>, 
-  onSignup: (role: "business" | "seeker", email: string, password?: string) => Promise<void>,
-  onGoogleLogin: () => void,
-  onFacebookLogin: () => void,
+function LoginPage({ onGoogleLogin, onFacebookLogin }: { 
+  onGoogleLogin: () => Promise<void>,
+  onFacebookLogin: () => Promise<void>,
   key?: any 
 }) {
-  const [mode, setMode] = useState<"login" | "signup">("login");
-  const [role, setRole] = useState<"seeker" | "business">("seeker");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email || !password) return;
-    
+  const handleSocialLogin = async (provider: 'google' | 'facebook') => {
     setLoading(true);
-    setError(null);
     try {
-      if (mode === "login") {
-        await onLogin(email, password);
-      } else {
-        await onSignup(role, email, password);
-      }
-    } catch (err: any) {
-      setError(err.message || "An unexpected error occurred");
+      if (provider === 'google') await onGoogleLogin();
+      else await onFacebookLogin();
     } finally {
       setLoading(false);
     }
@@ -935,113 +886,6 @@ function LoginPage({ onLogin, onSignup, onGoogleLogin, onFacebookLogin }: {
           <p className="text-[#5a5a40] font-bold text-[10px] tracking-[0.3em] uppercase mt-2 opacity-70">Empowering Local Talents</p>
         </div>
 
-        <div className="flex bg-[#f5f5f0] p-1.5 rounded-2xl mb-8">
-          <button 
-            onClick={() => { setMode("login"); setError(null); }}
-            className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all duration-300 ${mode === "login" ? "bg-white text-[#5a5a40] shadow-md" : "text-slate-400 hover:text-slate-600"}`}
-          >
-            Log In
-          </button>
-          <button 
-            onClick={() => { setMode("signup"); setError(null); }}
-            className={`flex-1 py-3 rounded-xl font-bold text-sm transition-all duration-300 ${mode === "signup" ? "bg-white text-[#5a5a40] shadow-md" : "text-slate-400 hover:text-slate-600"}`}
-          >
-            Sign Up
-          </button>
-        </div>
-
-        {error && (
-          <motion.div 
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            className="mb-6 p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-3 text-rose-600"
-          >
-            <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" />
-            <p className="text-sm font-medium">{error}</p>
-          </motion.div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <AnimatePresence mode="wait">
-            {mode === "signup" && (
-              <motion.div 
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: 'auto' }}
-                exit={{ opacity: 0, height: 0 }}
-                className="space-y-4 overflow-hidden"
-              >
-                <label className="block text-xs font-bold text-[#5a5a40] uppercase tracking-wider">Account Type</label>
-                <div className="grid grid-cols-2 gap-4">
-                  <button 
-                    type="button"
-                    onClick={() => setRole("seeker")}
-                    className={`p-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-2 ${role === "seeker" ? "border-[#5a5a40] bg-[#fdfcf8] text-[#5a5a40] shadow-sm" : "border-[#f5f5f0] text-slate-400 hover:border-[#e5e2d5]"}`}
-                  >
-                    <User className="w-6 h-6" />
-                    <span className="text-xs font-bold">Find Work</span>
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setRole("business")}
-                    className={`p-4 rounded-2xl border-2 transition-all flex flex-col items-center gap-2 ${role === "business" ? "border-[#5a5a40] bg-[#fdfcf8] text-[#5a5a40] shadow-sm" : "border-[#f5f5f0] text-slate-400 hover:border-[#e5e2d5]"}`}
-                  >
-                    <Users className="w-6 h-6" />
-                    <span className="text-xs font-bold">Hire Help</span>
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs font-bold text-[#5a5a40] uppercase tracking-wider mb-2">Email Address</label>
-              <div className="relative group">
-                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-[#5a5a40] transition-colors" />
-                <input 
-                  type="email" 
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full pl-12 pr-4 py-4 rounded-2xl border border-[#e5e2d5] focus:ring-2 focus:ring-[#5a5a40]/20 focus:border-[#5a5a40] outline-none transition-all bg-white/50"
-                  placeholder="name@example.com"
-                  required
-                />
-              </div>
-            </div>
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <label className="block text-xs font-bold text-[#5a5a40] uppercase tracking-wider">Password</label>
-                {mode === "login" && (
-                  <button type="button" className="text-[10px] font-bold text-[#5a5a40] hover:underline uppercase tracking-wider opacity-60">Forgot?</button>
-                )}
-              </div>
-              <div className="relative group">
-                <ShieldCheck className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300 group-focus-within:text-[#5a5a40] transition-colors" />
-                <input 
-                  type="password" 
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-12 pr-4 py-4 rounded-2xl border border-[#e5e2d5] focus:ring-2 focus:ring-[#5a5a40]/20 focus:border-[#5a5a40] outline-none transition-all bg-white/50"
-                  placeholder="••••••••"
-                  required
-                />
-              </div>
-            </div>
-          </div>
-
-          <button 
-            type="submit" 
-            disabled={loading}
-            className={`w-full py-4 rounded-2xl font-bold text-white shadow-lg transition-all flex items-center justify-center gap-2 ${loading ? 'bg-slate-400 cursor-not-allowed' : 'bg-[#5a5a40] hover:bg-[#3a3a30] hover:shadow-xl transform hover:-translate-y-0.5'}`}
-          >
-            {loading ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-            ) : (
-              mode === "login" ? "Log In" : "Create Account"
-            )}
-          </button>
-        </form>
-
         <div className="mt-10">
           <div className="flex items-center gap-4 mb-8">
             <div className="h-[1px] flex-1 bg-[#e5e2d5]" />
@@ -1051,15 +895,17 @@ function LoginPage({ onLogin, onSignup, onGoogleLogin, onFacebookLogin }: {
           
           <div className="grid grid-cols-2 gap-4">
             <button 
-              onClick={onGoogleLogin}
-              className="flex items-center justify-center gap-3 py-3.5 border border-[#e5e2d5] rounded-2xl hover:bg-slate-50 transition-all group"
+              onClick={() => handleSocialLogin('google')}
+              disabled={loading}
+              className="flex items-center justify-center gap-3 py-3.5 border border-[#e5e2d5] rounded-2xl hover:bg-slate-50 transition-all group disabled:opacity-50"
             >
               <img src="https://www.google.com/favicon.ico" className="w-4 h-4 grayscale group-hover:grayscale-0 transition-all" alt="Google" />
               <span className="text-sm font-bold text-slate-600">Google</span>
             </button>
             <button 
-              onClick={onFacebookLogin}
-              className="flex items-center justify-center gap-3 py-3.5 border border-[#e5e2d5] rounded-2xl hover:bg-slate-50 transition-all group"
+              onClick={() => handleSocialLogin('facebook')}
+              disabled={loading}
+              className="flex items-center justify-center gap-3 py-3.5 border border-[#e5e2d5] rounded-2xl hover:bg-slate-50 transition-all group disabled:opacity-50"
             >
               <Facebook className="w-4 h-4 text-slate-400 group-hover:text-[#1877f2] transition-all" />
               <span className="text-sm font-bold text-slate-600">Facebook</span>
@@ -1069,23 +915,8 @@ function LoginPage({ onLogin, onSignup, onGoogleLogin, onFacebookLogin }: {
 
         <div className="mt-10 text-center">
           <p className="text-sm text-slate-500">
-            {mode === "login" ? "Don't have an account?" : "Already have an account?"}
-            <button 
-              onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(null); }}
-              className="ml-2 font-bold text-[#5a5a40] hover:underline"
-            >
-              {mode === "login" ? "Sign Up" : "Log In"}
-            </button>
+            {loading ? "Connecting..." : "Sign in with your social account to continue."}
           </p>
-        </div>
-
-        <div className="mt-8 pt-6 border-t border-[#e5e2d5]/50 text-center">
-          <button 
-            onClick={() => { setEmail("admin@raketero.com"); setPassword("admin123"); onLogin("admin@raketero.com", "admin123"); }} 
-            className="text-[10px] text-slate-400 hover:text-[#5a5a40] font-bold uppercase tracking-widest transition-colors"
-          >
-            Moderator Access
-          </button>
         </div>
       </div>
     </motion.div>
@@ -1109,9 +940,6 @@ function ProfilePage({ user }: { user: UserProfile | null, key?: any }) {
             </div>
             <div>
               <h1 className="text-3xl font-bold text-[#3a3a30] serif">{user.name}</h1>
-              <p className="text-slate-500 flex items-center gap-2 mt-1">
-                <Mail className="w-4 h-4" /> {user.email}
-              </p>
             </div>
           </div>
 
@@ -1242,7 +1070,6 @@ function MessagesPage({ user, messages, onSendMessage, businesses, seekers }: {
 function BusinessRegisterPage({ onRegister }: { onRegister: (data: Omit<Business, "id" | "verificationStatus">) => void, key?: any }) {
   const [formData, setFormData] = useState({
     name: "",
-    email: "",
     address: "",
     phone: "",
     idUpload: "",
@@ -1251,7 +1078,7 @@ function BusinessRegisterPage({ onRegister }: { onRegister: (data: Omit<Business
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onRegister(formData);
+    onRegister(formData as any);
   };
 
   return (
@@ -1290,17 +1117,7 @@ function BusinessRegisterPage({ onRegister }: { onRegister: (data: Omit<Business
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label className="block text-sm font-semibold text-[#5a5a40] mb-1">Email Address</label>
-              <input 
-                required
-                type="email" 
-                className="w-full px-4 py-3 rounded-full border border-[#e5e2d5] focus:ring-2 focus:ring-[#5a5a40] outline-none"
-                value={formData.email}
-                onChange={e => setFormData({...formData, email: e.target.value})}
-              />
-            </div>
+          <div className="grid grid-cols-1 gap-6">
             <div>
               <label className="block text-sm font-semibold text-[#5a5a40] mb-1">Address</label>
               <input 
@@ -1353,7 +1170,6 @@ function BusinessRegisterPage({ onRegister }: { onRegister: (data: Omit<Business
 function SeekerRegisterPage({ onRegister, initialData }: { onRegister: (data: Omit<Seeker, "id" | "verificationStatus">) => void, initialData: Partial<Seeker>, key?: any }) {
   const [formData, setFormData] = useState({
     name: initialData.name || "",
-    email: initialData.email || "",
     phone: "",
     address: "",
     idUpload: "",
@@ -1393,7 +1209,7 @@ function SeekerRegisterPage({ onRegister, initialData }: { onRegister: (data: Om
     onRegister({
       ...formData,
       attachments,
-    });
+    } as any);
   };
 
   return (
@@ -1417,19 +1233,6 @@ function SeekerRegisterPage({ onRegister, initialData }: { onRegister: (data: Om
               />
             </div>
             <div>
-              <label className="block text-sm font-semibold text-[#5a5a40] mb-1">Email Address</label>
-              <input 
-                required
-                type="email" 
-                className="w-full px-4 py-3 rounded-full border border-[#e5e2d5] focus:ring-2 focus:ring-[#5a5a40] outline-none"
-                value={formData.email}
-                onChange={e => setFormData({...formData, email: e.target.value})}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
               <label className="block text-sm font-semibold text-[#5a5a40] mb-1">Contact Number</label>
               <input 
                 required
@@ -1439,6 +1242,9 @@ function SeekerRegisterPage({ onRegister, initialData }: { onRegister: (data: Om
                 onChange={e => setFormData({...formData, phone: e.target.value})}
               />
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-6">
             <div>
               <label className="block text-sm font-semibold text-[#5a5a40] mb-1">Address / Location</label>
               <input 
@@ -2123,13 +1929,24 @@ function SeekerDashboard({
   key?: any
 }) {
   const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("All Categories");
+  const [selectedLocation, setSelectedLocation] = useState("All Locations");
 
-  const filteredJobs = jobs.filter(job => 
-    job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    job.businessName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    job.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    job.location.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const categories = ["All Categories", ...Array.from(new Set(jobs.map(j => j.category)))];
+  const locations = ["All Locations", ...Array.from(new Set(jobs.map(j => j.location)))];
+
+  const filteredJobs = jobs.filter(job => {
+    const matchesSearch = 
+      job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      job.businessName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      job.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      job.location.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesCategory = selectedCategory === "All Categories" || job.category === selectedCategory;
+    const matchesLocation = selectedLocation === "All Locations" || job.location === selectedLocation;
+
+    return matchesSearch && matchesCategory && matchesLocation;
+  });
 
   return (
     <motion.div 
@@ -2178,15 +1995,43 @@ function SeekerDashboard({
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Job Search & Listings */}
         <div className="lg:col-span-2 space-y-6">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
-            <input 
-              type="text" 
-              placeholder="Search by role, business, or location..."
-              className="w-full pl-12 pr-4 py-4 rounded-full bg-white border border-[#e5e2d5] shadow-sm focus:ring-2 focus:ring-[#5a5a40] outline-none transition-all"
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-            />
+          <div className="flex flex-col gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
+              <input 
+                type="text" 
+                placeholder="Search by role or business..."
+                className="w-full pl-12 pr-4 py-4 rounded-full bg-white border border-[#e5e2d5] shadow-sm focus:ring-2 focus:ring-[#5a5a40] outline-none transition-all"
+                value={searchTerm}
+                onChange={e => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <div className="relative flex-1 min-w-[160px]">
+                <Briefcase className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 rounded-2xl bg-white border border-[#e5e2d5] shadow-sm focus:ring-2 focus:ring-[#5a5a40] outline-none appearance-none text-sm font-medium text-slate-600"
+                >
+                  {categories.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="relative flex-1 min-w-[160px]">
+                <MapPin className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
+                <select
+                  value={selectedLocation}
+                  onChange={(e) => setSelectedLocation(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 rounded-2xl bg-white border border-[#e5e2d5] shadow-sm focus:ring-2 focus:ring-[#5a5a40] outline-none appearance-none text-sm font-medium text-slate-600"
+                >
+                  {locations.map(loc => (
+                    <option key={loc} value={loc}>{loc}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
           </div>
 
           <div className="space-y-4">
