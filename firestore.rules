@@ -2,20 +2,56 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: id, name, email, role
+    //
+    // Collection: businesses
+    // Fields: id, name, email, address, phone, idUpload, description, verificationStatus
+    //
+    // Collection: seekers
+    // Fields: id, name, email, phone, address, attachments, idUpload, verificationStatus
+    //
+    // Collection: jobs
+    // Fields: id, businessId, businessName, title, description, requirements, category, location, employmentType, salary, postedAt, status
+    //
+    // Collection: applications
+    // Fields: id, jobId, businessId, seekerId, seekerName, seekerContact, attachments, notes, status, appliedAt
+    //
+    // Collection: notifications
+    // Fields: id, userId, title, message, type, read, createdAt
+    //
+    // ===============================================================
+
+    // ===============================================================
     // Helper Functions
     // ===============================================================
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
-    
+
     function isAdmin() {
       return isAuthenticated() && 
         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
          (request.auth.token.email == "acipandrey@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isBusiness() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'business';
+    }
+
+    function isSeeker() {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'seeker';
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
 
     function hasOnlyAllowedFields(fields) {
@@ -23,142 +59,52 @@ service cloud.firestore {
     }
 
     // ===============================================================
-    // Domain Validators
-    // ===============================================================
-    
-    function isValidUser(data) {
-      return data.id is string &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.email is string &&
-             data.role in ['business', 'seeker', 'admin'];
-    }
-
-    function isValidBusiness(data) {
-      return data.id is string &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.email is string &&
-             data.verificationStatus in ['Pending', 'Verified', 'Rejected'];
-    }
-
-    function isValidSeeker(data) {
-      return data.id is string &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
-             data.email is string &&
-             data.verificationStatus in ['Pending', 'Verified', 'Rejected'];
-    }
-
-    function isValidJob(data) {
-      return data.id is string &&
-             data.businessId is string &&
-             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
-             data.status in ['Active', 'Closed'];
-    }
-
-    function isValidApplication(data) {
-      return data.id is string &&
-             data.jobId is string &&
-             data.businessId is string &&
-             data.seekerId is string &&
-             data.status in ['Pending', 'Under Review', 'Interview Scheduled', 'Accepted', 'Declined'];
-    }
-
-    function isValidNotification(data) {
-      return data.id is string &&
-             data.userId is string &&
-             data.title is string &&
-             data.type in ['info', 'success', 'warning'] &&
-             data.read is bool;
-    }
-
-    function isValidInterview(data) {
-      return data.id is string &&
-             data.applicationId is string &&
-             data.jobId is string &&
-             data.businessId is string &&
-             data.seekerId is string &&
-             data.scheduledAt is string &&
-             data.status in ['Scheduled', 'Completed', 'Cancelled'];
-    }
-
-    function isValidMessage(data) {
-      return data.id is string &&
-             data.chatId is string &&
-             data.senderId is string &&
-             data.receiverId is string &&
-             data.content is string && data.content.size() > 0 && data.content.size() < 5000 &&
-             data.read is bool;
-    }
-
-    function isValidReview(data) {
-      return data.id is string &&
-             data.targetUserId is string &&
-             data.authorId is string &&
-             data.rating is number && data.rating >= 1 && data.rating <= 5;
-    }
-
-    // ===============================================================
-    // Rules
+    // Collection Rules
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role != 'admin' || isAdmin());
-      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.role == resource.data.role || isAdmin());
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId) && 
+        hasOnlyAllowedFields(['id', 'name', 'email', 'role']) &&
+        request.resource.data.role in ['business', 'seeker', 'admin'];
+      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role);
     }
 
     match /businesses/{businessId} {
       allow read: if isAuthenticated();
-      allow create: if isOwner(businessId) && isValidBusiness(request.resource.data);
-      allow update: if (isOwner(businessId) && isValidBusiness(request.resource.data) && request.resource.data.verificationStatus == resource.data.verificationStatus) || isAdmin();
+      allow create: if isOwner(businessId) && isBusiness();
+      allow update: if isAdmin() || (isOwner(businessId) && request.resource.data.verificationStatus == resource.data.verificationStatus);
     }
 
     match /seekers/{seekerId} {
-      allow read: if isAuthenticated() && (isOwner(seekerId) || isAdmin() || resource.data.verificationStatus == 'Verified');
-      allow create: if isOwner(seekerId) && isValidSeeker(request.resource.data);
-      allow update: if (isOwner(seekerId) && isValidSeeker(request.resource.data) && request.resource.data.verificationStatus == resource.data.verificationStatus) || isAdmin();
+      allow read: if isAuthenticated();
+      allow create: if isOwner(seekerId) && isSeeker();
+      allow update: if isAdmin() || (isOwner(seekerId) && request.resource.data.verificationStatus == resource.data.verificationStatus);
     }
 
     match /jobs/{jobId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidJob(request.resource.data) && request.resource.data.businessId == request.auth.uid;
-      allow update: if (isAuthenticated() && isValidJob(request.resource.data) && resource.data.businessId == request.auth.uid) || isAdmin();
-      allow delete: if (isAuthenticated() && resource.data.businessId == request.auth.uid) || isAdmin();
+      allow create: if isBusiness() && request.resource.data.businessId == request.auth.uid;
+      allow update: if isAdmin() || (isBusiness() && resource.data.businessId == request.auth.uid);
+      allow delete: if isAdmin() || (isBusiness() && resource.data.businessId == request.auth.uid);
     }
 
     match /applications/{applicationId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.seekerId || request.auth.uid == resource.data.businessId || isAdmin());
-      allow create: if isAuthenticated() && isValidApplication(request.resource.data) && request.resource.data.seekerId == request.auth.uid;
-      allow update: if (isAuthenticated() && isValidApplication(request.resource.data) && (request.auth.uid == resource.data.seekerId || request.auth.uid == resource.data.businessId)) || isAdmin();
+      allow read: if isAuthenticated() && (
+        request.auth.uid == resource.data.seekerId || 
+        request.auth.uid == resource.data.businessId || 
+        isAdmin()
+      );
+      allow create: if isSeeker() && request.resource.data.seekerId == request.auth.uid;
+      allow update: if isAdmin() || 
+        (isBusiness() && resource.data.businessId == request.auth.uid) ||
+        (isSeeker() && resource.data.seekerId == request.auth.uid && request.resource.data.status == resource.data.status);
     }
 
     match /notifications/{notificationId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
-      allow create: if isAdmin(); // Only admins can broadcast notifications for now, or add specific logic
-      allow update: if isAuthenticated() && (request.auth.uid == resource.data.userId || isAdmin());
-    }
-
-    match /interviews/{interviewId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.seekerId || request.auth.uid == resource.data.businessId || isAdmin());
-      allow create: if isAuthenticated() && isValidInterview(request.resource.data) && request.auth.uid == request.resource.data.businessId;
-      allow update: if (isAuthenticated() && isValidInterview(request.resource.data) && (request.auth.uid == resource.data.seekerId || request.auth.uid == resource.data.businessId)) || isAdmin();
-    }
-
-    match /messages/{messageId} {
-      allow read: if isAuthenticated() && (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.receiverId || isAdmin());
-      allow create: if isAuthenticated() && isValidMessage(request.resource.data) && request.auth.uid == request.resource.data.senderId;
-      allow update: if isAuthenticated() && (request.auth.uid == resource.data.receiverId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
-    }
-
-    match /reviews/{reviewId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidReview(request.resource.data) && request.auth.uid == request.resource.data.authorId;
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
-    }
-
-    match /system_logs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isAuthenticated(); // Allow app to log events
+      allow read: if isOwner(resource.data.userId);
+      allow update: if isOwner(resource.data.userId) && hasOnlyAllowedFields(['read']);
+      allow create: if isAdmin() || isAuthenticated(); // System or relevant user can create
     }
   }
 }
